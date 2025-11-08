@@ -8,7 +8,8 @@ def create_llm_model():
         "deepseek-chat",
         provider=DeepSeekProvider(
             api_key=settings.DEEPSEEK_API_KEY
-        )
+        ),
+        temperature=0.1
     )
 
 

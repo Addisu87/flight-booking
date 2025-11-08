@@ -1,3 +1,4 @@
+import logfire 
 from time import sleep
 from pydantic_ai.tools import tool
 from playwright.sync_api import sync_playwright
@@ -10,24 +11,30 @@ def browserbase_tool(url: str) -> str:
     if not settings.BROWSERBASE_API_KEY:
         raise ValueError("BROWSERBASE_API_KEY is not set")
     
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.connect_over_cdp(
-                f"wss://connect.browserbase.com?apiKey={settings.BROWSERBASE_API_KEY}"
-            )
-            context = browser.contexts[0]
-            page = context.pages[0]
-            
-            # Navigate to the URL
-            page.goto(url)
-            
-            # Wait for the flight search to finish (adjust timing as needed)
-            sleep(25)
-            
-            # Extract and convert content to text
-            content = html2text(page.content())
-            browser.close()
-            
-            return content
-    except Exception as e:
-        return f"Error loading page: {str(e)}"
+    with logfire.span('browserbase_navigation', url=url):
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect_over_cdp(
+                    f"wss://connect.browserbase.com?apiKey={settings.BROWSERBASE_API_KEY}"
+                )
+                
+                # Create new context for isolation
+                context = browser.contexts[0]
+                page = context.pages[0]
+                
+                # Navigate to the URL
+                logfire.info('Navigating to URL', url=url)
+                page.goto(url)
+                
+                # Wait for the flight search to finish (adjust timing as needed)
+                sleep(25)
+                
+                # Extract and convert content to text
+                content = html2text(page.content())
+                browser.close()
+                
+                logfire.infor('Successfully loaded page', url=url)
+                
+                return content
+        except Exception as e:
+            return f"Error loading page: {str(e)}"

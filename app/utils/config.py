@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str | None = None
     BROWSERBASE_API_KEY: str | None = None
     LOGFIRE_TOKEN: str | None = None
+    MAXIMUM_RETRIES: int = 2
     APP_NAME: str = 'Flight Finder'
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000

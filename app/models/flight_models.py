@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime, timezone
 from typing import Literal, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
@@ -51,8 +51,6 @@ class FlightDetails(BaseModel):
     def is_direct(self) -> bool: 
         return self.stops == 0
     
-
-
 class FlightSearchRequest(BaseModel):
     """Flight search request parameters."""
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -98,25 +96,78 @@ class FlightSearchResult(BaseModel):
 class NoFlightFound(BaseModel):
     """When no valid flight is found."""
     message: str = "No flights found matching your criteria."
+    search_request: FlightSearchRequest
+    suggestions: List[str] 
+    alternative_dates: List[datetime.date]
 
 
 class SeatPreference(BaseModel):
     """Seat selection preferences."""
-    row: int = Field(ge=1, le=30, description="Row number between 1 and 30")
+    model_config = ConfigDict(str_strip_whitespace=True)
+     
+    row: int = Field(..., ge=1, le=30, description="Row number between 1 and 30")
     seat: Literal["A", "B", "C", "D", "E", "F"] = Field(description="Seat position")
+    seat_type: SeatType = Field(description='Type of seat')
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Automatically determine seat type 
+        if not hasattr(self, 'seat_type'):
+            self.seat_type = SeatType.WINDOW
+        elif self.seat in ['C', 'D']:
+            self.seat_type = SeatType.AISLE
+        else: 
+            self.seat_type = SeatType.MIDDLE
+            
+    @property
+    def has_extra_legroom(self) -> bool: 
+        return self.row in [1, 14, 20]
     
     def __str__(self):
-        return f"{self.row}{self.seat}"
+        return f"{self.row}{self.seat} {self.seat_type.value}"
 
 
 class SeatSelectionFailed(BaseModel):
     """Unable to extract a seat selection."""
     message: str = "Failed to process seat selection."
-
+    user_input: str 
+    reason: str
 
 class BookingConfirmation(BaseModel):
-    """Flight booking confirmation."""
+    """Flight booking confirmation with full details."""
+    model_config = ConfigDict(str_strip_whitespace=True, frozen=True)
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     flight: FlightDetails
     seat: SeatPreference
-    confirmation_number: str | None = None
+    passengers: int = Field(1, ge=1, le=9)
     total_price: float
+    confirmation_number: str = Field(..., pattern=r'^[A-Z0-9]{6, 10}$')
+    booking_time: datetime.datetime.now(timezone.utc)
+    status: FlightStatus = Field(default = FlightStatus.BOOKED)
+    
+    
+    @field_validator('total_price')
+    def validate_total_price(cls, v, values):
+        if 'flight' in values and v < values['flight'].price: 
+            raise ValueError('Total price cannot be less than flight price')
+        return v 
+    
+    @property
+    def is_active(self) -> bool: 
+        return self.status == FlightStatus.BOOKED
+    
+class FlightSummary(BaseModel):
+    """Summary output using existing FlightDetails model."""
+    model_config = ConfigDict(str_strip_whitespace=True, frozen=True)
+    
+    total_flights: int 
+    price_range: str
+    best_deal: FlightDetails 
+    best_timing: FlightDetails 
+    airlines: List[str] 
+    direct_flights: int 
+    connecting_flights: int 
+    summary_text: str = Field(..., description="Human-readable summary")
+    recommendations: List[str] 
+    key_insights: List[str]
