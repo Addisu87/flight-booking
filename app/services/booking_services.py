@@ -2,7 +2,7 @@ import random
 import string
 import logfire
 from datetime import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.messages import ModelMessage
@@ -25,11 +25,11 @@ booking_usage_limits = UsageLimits(request_limit=10, output_tokens_limit=500, to
 # ------------------------------------------------------------------------------
 
 async def select_seat_with_retry(
-    usage: Optional[RunUsage] = None,
+    usage: RunUsage | None = None,
     max_attempts: int = 3,
     seat_input: str | None = None,
     message_history: List[ModelMessage] | None = None
-) -> Tuple[Optional[SeatPreference], List[ModelMessage], RunUsage]:
+) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
     with logfire.span("select_seat_with_retry"):
         history = message_history or []
         current_usage = usage or RunUsage()
@@ -51,7 +51,7 @@ async def _seat_selection_attempt(
     history: List[ModelMessage],
     usage: RunUsage,
     seat_string: str | None = None
-) -> Tuple[Optional[SeatPreference], List[ModelMessage], RunUsage]:
+) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
 
     if not seat_string:
         return None, history, usage
@@ -64,7 +64,7 @@ async def _seat_selection_attempt(
             usage_limits=booking_usage_limits,
         )
 
-        if isinstance(result.data, dict) and 'reason' in result.data:
+        if hasattr(result, 'data') and isinstance(result.data, dict) and 'reason' in result.data:
             logfire.warning("Seat selection failed", reason=result.data['reason'])
             return None, result.all_messages(), result.usage
 
@@ -126,7 +126,7 @@ async def complete_booking_workflow(
     available_flights: List[FlightDetails],
     seat_preference_prompt: str | None = None,
     max_seat_retries: int = 3,
-    usage: Optional[RunUsage] = None,
+    usage: RunUsage | None = None,
 ) -> Dict:
 
     history: List[ModelMessage] = []
@@ -175,7 +175,7 @@ async def complete_booking_workflow(
 
 def _match_flight(
     search_result, flights: List[FlightDetails]
-) -> Optional[FlightDetails]:
+) -> FlightDetails | None:
 
     if not search_result.flights:
         return None
@@ -211,7 +211,7 @@ async def quick_booking(
     seat_preference: str | None = None,
     passengers: int = 1,
     flight_class: str = "economy",
-    usage: Optional[RunUsage] = None
+    usage: RunUsage | None = None
 ) -> Dict:
 
     try:
