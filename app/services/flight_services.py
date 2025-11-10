@@ -21,7 +21,6 @@ from app.tools.kayak_tool import kayak_search_tool
 
 flight_usage_limits = UsageLimits(request_limit=5, output_tokens_limit=500, total_tokens_limit=1000)
 
-
 # --------------------------------------------------------------------
 # ✅ PUBLIC: Search a single flight request
 # --------------------------------------------------------------------
@@ -46,7 +45,16 @@ async def search_flights(
         return result
 
     except Exception as e:
-        return _handle_error(e, search_request, start)
+        logfire.error(
+            "Flight search error",
+            error=str(e),
+            duration=time.time() - start
+        )
+        return NoFlightFound(
+            search_request=search_request,
+            message="An unexpected error occurred.",
+            suggestions=["Try again", "Contact support if it continues"]
+        )
 
 
 # --------------------------------------------------------------------
@@ -65,10 +73,14 @@ async def _run_pipeline(
 
     flights = await _extract_flights(page, usage)
     if not flights:
-        return _no_found(search_request)
+        logfire.info("No flights extracted")
+        return NoFlightFound(
+            search_request=search_request,
+            message="No flights found.",
+            suggestions=["Try different dates", "Check airport codes", "Consider nearby airports"]
+        )
 
     return await _analyze_flights(search_request, flights, usage, start)
-
 
 # --------------------------------------------------------------------
 # ✅ INTERNAL: Fetch Kayak Page
@@ -139,38 +151,6 @@ async def _analyze_flights(
             output.search_duration = time.time() - start
 
         return output
-
-
-
-# --------------------------------------------------------------------
-# ✅ INTERNAL: No Flights Found
-# --------------------------------------------------------------------
-
-def _no_found(req: FlightSearchRequest) -> NoFlightFound:
-    logfire.info("No flights extracted")
-    return NoFlightFound(
-        search_request=req,
-        message="No flights found.",
-        suggestions=["Try different dates", "Check airport codes", "Consider nearby airports"]
-    )
-
-
-# --------------------------------------------------------------------
-# ✅ INTERNAL: Handle Errors
-# --------------------------------------------------------------------
-
-def _handle_error(error: Exception, req: FlightSearchRequest, start: float) -> NoFlightFound:
-    logfire.error(
-        "Flight search error",
-        error=str(error),
-        duration=time.time() - start
-    )
-    return NoFlightFound(
-        search_request=req,
-        message="An unexpected error occurred.",
-        suggestions=["Try again", "Contact support if it continues"]
-    )
-
 
 # --------------------------------------------------------------------
 # ✅ PUBLIC: Batch Search

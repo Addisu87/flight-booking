@@ -1,11 +1,17 @@
 from typing import List, Dict
 from pydantic_ai.usage import RunUsage, UsageLimits
 import logfire
+from datetime import datetime
 
 from app.agents.summarize_agent import summarize_agent, SummarizeDeps
 from app.models.flight_models import FlightDetails, FlightSearchRequest
 
 summarize_usage_limits = UsageLimits(request_limit=5, output_tokens_limit=500, total_tokens_limit=1000)
+
+
+def _timestamp():
+    return datetime.now().isoformat()
+
 
 # ---------------------------------------------------------
 # ✅ PUBLIC: Generate Flight Summary (AI-powered)
@@ -19,10 +25,10 @@ async def generate_flight_summary(
     include_recommendations: bool = True,
     include_insights: bool = True
 ) -> Dict:
-    usage = usage or RunUsage()
+    current_usage = usage or RunUsage()
 
     if not flights:
-        return _create_empty_summary(search_request, "No flights found.")
+        return _create_empty_summary(search_request, "No flights found.", current_usage)
 
     try:
         deps = SummarizeDeps(
@@ -37,17 +43,17 @@ async def generate_flight_summary(
         result = await summarize_agent.run(
             "Generate flight summary",
             deps=deps,
-            usage=usage,
+            usage=current_usage,
             usage_limits=summarize_usage_limits
         )
 
         return _format_summary_result(
-            result.output, search_request, len(flights), usage
+            result.output, search_request, len(flights), result.usage
         )
 
     except Exception as e:
         logfire.error("Summary generation failed", error=str(e))
-        return _create_fallback_summary(search_request, flights, usage)
+        return _create_fallback_summary(search_request, flights, current_usage)
 
 
 # ---------------------------------------------------------
@@ -57,20 +63,20 @@ async def generate_flight_summary(
 @logfire.instrument("generate_comparative_analysis", extract_args=True)
 async def generate_comparative_analysis(
     flights: List[FlightDetails],
-    usage: RunUsage | None = None
+    usage: RunUsage | None = None,
 ) -> Dict:
-    usage = usage or RunUsage()
+    current_usage = usage or RunUsage()
 
     if not flights:
-        return {"error": "No flights provided", "usage_stats": usage}
+        return {"error": "No flights provided", "usage_stats": current_usage}
 
     try:
         analysis = _perform_basic_comparison(flights)
-        analysis["usage_stats"] = usage
+        analysis["usage_stats"] = current_usage
         return analysis
     except Exception as e:
         logfire.error("Comparative analysis failed", error=str(e))
-        return {"error": str(e), "usage_stats": _get_usage_stats(usage)}
+        return {"error": str(e), "usage_stats": current_usage}
 
 
 # ---------------------------------------------------------
@@ -82,16 +88,16 @@ async def generate_travel_recommendations(
     search_request: FlightSearchRequest,
     flights: List[FlightDetails],
     traveler_type: str = "general",
-    usage: RunUsage | None = None
+    usage: RunUsage | None = None,
 ) -> Dict:
-    usage = usage or RunUsage()
+    current_usage = usage or RunUsage()
 
     if not flights:
         return {
             "traveler_type": traveler_type,
             "recommendations": ["No flights available"],
             "suitable_flights": [],
-            "usage_stats": usage
+            "usage_stats": current_usage
         }
 
     try:
@@ -101,9 +107,9 @@ async def generate_travel_recommendations(
         return {
             "traveler_type": traveler_type,
             "recommendations": recs,
-            "suitable_flights": [_flight_dict(f) for f in suitable[:5]],
+            "suitable_flights": [f.model_dump() for f in suitable[:5]],
             "total_suitable_flights": len(suitable),
-            "usage_stats": usage
+            "usage_stats": current_usage
         }
 
     except Exception as e:
@@ -112,7 +118,7 @@ async def generate_travel_recommendations(
             "traveler_type": traveler_type,
             "recommendations": ["Error generating recommendations"],
             "suitable_flights": [],
-            "usage_stats": usage
+            "usage_stats": current_usage
         }
 
 
@@ -148,20 +154,12 @@ def generate_quick_insights(flights: List[FlightDetails]) -> Dict:
 
 
 # ---------------------------------------------------------
-# ✅ PUBLIC: Usage Tracker
-# ---------------------------------------------------------
-
-def create_usage_tracker() -> RunUsage:
-    return RunUsage()
-
-
-# ---------------------------------------------------------
 # ✅ INTERNAL HELPERS (NOT EXPORTED)
 # ---------------------------------------------------------
 
 def _format_summary_result(data, search_request, count, usage):
     return {
-        "search_criteria": search_request.dict(),
+        "search_criteria": search_request.model_dump(),
         "total_flights": count,
         "summary_text": getattr(data, "summary_text", ""),
         "key_insights": getattr(data, "key_insights", []),
@@ -177,9 +175,9 @@ def _format_summary_result(data, search_request, count, usage):
     }
 
 
-def _create_empty_summary(search_request, message):
+def _create_empty_summary(search_request, message, usage):
     return {
-        "search_criteria": search_request.dict(),
+        "search_criteria": search_request.model_dump(),
         "total_flights": 0,
         "summary_text": message,
         "key_insights": ["No flights available"],
@@ -194,7 +192,7 @@ def _create_empty_summary(search_request, message):
         "connecting_flights": 0,
         "best_deal": None,
         "best_timing": None,
-        "usage_stats": {"total_requests": 0, "total_tokens": 0, "total_duration": 0},
+        "usage_stats": usage,
         "generated_at": _timestamp()
     }
 
@@ -212,7 +210,7 @@ def _create_fallback_summary(search_request, flights, usage):
     )
 
     return {
-        "search_criteria": search_request.dict(),
+        "search_criteria": search_request.model_dump(),
         "total_flights": len(flights),
         "summary_text": text,
         "key_insights": [
@@ -229,25 +227,24 @@ def _create_fallback_summary(search_request, flights, usage):
         "airlines": airlines,
         "direct_flights": direct,
         "connecting_flights": len(flights) - direct,
-        "best_deal": min(flights, key=lambda x: x.price),
-        "best_timing": flights[0],
-        "usage_stats": _get_usage_stats(usage),
+        "best_deal": min(flights, key=lambda x: x.price).model_dump(),
+        "best_timing": flights[0].model_dump(),
+        "usage_stats": usage,
         "generated_at": _timestamp()
     }
 
 
 def _perform_basic_comparison(flights):
     cheapest = min(flights, key=lambda f: f.price)
-    airlines = list({f.airline for f in flights})
 
     return {
-        "cheapest_option": _flight_dict(cheapest),
+        "cheapest_option": cheapest.model_dump(),
         "price_range": {
             "min": min(f.price for f in flights),
             "max": max(f.price for f in flights)
         },
         "total_flights": len(flights),
-        "unique_airlines": len(airlines)
+        "unique_airlines": len({f.airline for f in flights})
     }
 
 
@@ -283,18 +280,3 @@ def _traveler_recommendations(flights, traveler_type, req):
     ])
 
     return recs
-
-
-def _flight_dict(f):
-    return {
-        "airline": f.airline,
-        "flight_number": f.flight_number,
-        "price": f.price,
-        "origin": f.origin,
-        "destination": f.destination,
-        "departure_time": f.departure_time,
-        "arrival_time": f.arrival_time,
-        "duration": f.duration,
-        "stops": f.stops,
-        "is_direct": f.stops == 0
-    }
