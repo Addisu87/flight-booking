@@ -17,6 +17,7 @@ from app.models.flight_models import (
 )
 from app.tools.apify_browser import apify_browser_tool
 from app.tools.kayak_tool import kayak_search_tool
+from app.utils.usage_utils import get_usage_stats
 
 
 flight_usage_limits = UsageLimits(request_limit=5, output_tokens_limit=500, total_tokens_limit=1000)
@@ -36,11 +37,12 @@ async def search_flights(
     try:
         result = await _run_pipeline(search_request, usage, start)
 
+        usage_stats = get_usage_stats(usage)
         logfire.info(
             "Flight search completed",
             duration=time.time() - start,
             type=type(result).__name__,
-            total_usage=usage.total_usage
+            **usage_stats
         )
         return result
 
@@ -89,18 +91,25 @@ async def _run_pipeline(
 async def _fetch_page(req: FlightSearchRequest) -> str | NoFlightFound:
     with logfire.span("kayak_url"):
         url = kayak_search_tool(req)
+        print(f"🔍 DEBUG: Generated Kayak URL: {url}")
         logfire.debug("Generated Kayak URL", url=url)
 
     with logfire.span("browserbase_fetch"):
-        content = apify_browser_tool(url, wait_for_selector='[data-testid="flight-card"]')
+        print(f"🔍 DEBUG: Calling apify_browser_tool with URL: {url}")
+        content = apify_browser_tool(url)
+        print(f"🔍 DEBUG: apify_browser_tool returned: {content[:200]}...")
 
-        if content.startswith("Error"):
+        if content.startswith("Error") or content.startswith("Apify"):
+            error_msg = f"Apify failed: {content}"
+            print(f"❌ DEBUG: {error_msg}")
             return NoFlightFound(
                 search_request=req,
                 message="Failed to load flight results.",
-                suggestions=["Try again later", "Check your connection"]
+                suggestions=["Try again later", "Check your connection"],
+                alternative_dates=[]
             )
 
+    print(f"✅ DEBUG: Successfully fetched page content, length: {len(content)}")
     return content
 
 
@@ -113,10 +122,13 @@ async def _extract_flights(content: str, usage: RunUsage) -> List[FlightDetails]
         result = await flight_extraction_agent.run(content, usage=usage, usage_limits=flight_usage_limits)
         flights = result.output
 
+        # FIX: Use correct duration attribute
+        duration = getattr(result.usage, 'total_duration', 0)
+        
         logfire.info(
             "Extraction complete",
             found=len(flights),
-            extraction_time=result.usage.total_duration
+            extraction_time=duration
         )
 
         return flights

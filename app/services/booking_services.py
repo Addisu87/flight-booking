@@ -14,6 +14,7 @@ from app.models.flight_models import (
     SeatPreference,
 )
 from app.services.flight_services import search_flights
+from app.utils.usage_utils import get_usage_stats
 
 
 # Global usage limits for seat selection
@@ -137,16 +138,31 @@ async def complete_booking_workflow(
         if available_flights is None:
             search_result = await search_flights(search_request, current_usage)
             if hasattr(search_result, "message"):
-                return _error(search_result.message, current_usage)
+                return {
+                    "status": "error",
+                    "reason": search_result.message,
+                    "usage_stats": get_usage_stats(current_usage), 
+                    "timestamp": datetime.now().isoformat(),
+                }
             available_flights = search_result.flights
 
         if not available_flights:
-            return _error("No flights available", current_usage)
+            return {
+                "status": "error", 
+                "reason": "No flights available",
+                "usage_stats": get_usage_stats(current_usage),  
+                "timestamp": datetime.now().isoformat(),
+            }
 
         # STEP 2: Pick the actual flight from available_flights
         flight = _match_flight(search_result if 'search_result' in locals() else None, available_flights)
         if not flight:
-            return _error("No suitable flight found", current_usage)
+            return {
+                "status": "error",
+                "reason": "No suitable flight found", 
+                "usage_stats": get_usage_stats(current_usage),  
+                "timestamp": datetime.now().isoformat(),
+            }
 
         # STEP 3: Seat selection with retries
         seat, history, current_usage = await select_seat_with_retry(
@@ -163,16 +179,21 @@ async def complete_booking_workflow(
             **purchase,
             "status": "success",
             "search_criteria": search_request.model_dump(),
-            "usage_stats": current_usage,
+            "usage_stats": get_usage_stats(current_usage),
             "workflow_steps": {
                 "seat_selection_attempts": max_seat_retries,
-                "total_duration": current_usage.total_usage.total_duration if current_usage.total_usage else 0
+                "total_duration": getattr(current_usage, 'total_duration', 0)
             }
         }
 
     except Exception as e:
         logfire.error("Booking workflow error", error=str(e))
-        return _error(str(e), current_usage)
+        return {
+            "status": "error",
+            "reason": str(e),
+            "usage_stats": get_usage_stats(current_usage), 
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 def _match_flight(
@@ -190,14 +211,6 @@ def _match_flight(
             return f
 
     return flights[0] if flights else None
-
-def _error(reason: str, usage: RunUsage) -> Dict:
-    return {
-        "status": "error",
-        "reason": reason,
-        "usage_stats": usage,
-        "timestamp": datetime.now().isoformat(),
-    }
 
 
 # ------------------------------------------------------------------------------
@@ -219,7 +232,12 @@ async def quick_booking(
     try:
         date = datetime.strptime(departure_date, "%Y-%m-%d").date()
     except ValueError:
-        return _error(f"Invalid date: {departure_date}", usage or RunUsage())
+        return {
+            "status": "error",
+            "reason": f"Invalid date: {departure_date}",
+            "usage_stats": get_usage_stats(usage or RunUsage()),
+            "timestamp": datetime.now().isoformat(),
+        }
 
     req = FlightSearchRequest(
         origin=origin.upper(),

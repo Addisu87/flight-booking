@@ -2,6 +2,7 @@ import pytest
 from datetime import date
 from unittest.mock import patch
 from app.models.flight_models import FlightSearchRequest
+import logfire
 
 
 @pytest.fixture
@@ -35,3 +36,9 @@ def mock_settings():
     with patch('app.tools.apify_browser.settings') as mock_settings:
         mock_settings.APIFY_API_TOKEN = "test-token-123"
         yield mock_settings
+
+
+@pytest.fixture(autouse=True)
+def configure_logfire():
+    """Configure Logfire for tests"""
+    logfire.configure(send_to_logfire=False, console=False)
