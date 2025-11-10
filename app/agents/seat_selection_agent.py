@@ -32,30 +32,33 @@ seat_selection_agent = Agent[None, SeatPreference | SeatSelectionFailed](
 
 @seat_selection_agent.output_validator
 async def validate_seat_selection(
-    ctx: RunContext[None], 
-    result: SeatPreference | SeatSelectionFailed
+    ctx: RunContext[None], result: SeatPreference | SeatSelectionFailed
 ) -> SeatPreference | SeatSelectionFailed:
     """Validate seat selection with comprehensive checks."""
-    with logfire.span('validate_seat_selection'): 
+    with logfire.span("validate_seat_selection"):
         if isinstance(result, SeatSelectionFailed):
-            logfire.info("Seat selection failed", reason=result.reason, user_input=result.user_input)
-            
+            logfire.info(
+                "Seat selection failed",
+                reason=result.reason,
+                user_input=result.user_input,
+            )
+
             return result
-        
+
         # Additional validation
         if result.row < 1 or result.row > 410:
             logfire.warning("Invalid seat row", row=result.row)
             raise ModelRetry(f"Invalid row {result.row}. Must be between 1-410.")
-        
+
         if result.seat not in ["A", "B", "C", "D", "E", "F"]:
             logfire.warning("Invalid seat letter", seat=result.seat)
             raise ModelRetry(f"Invalid seat {result.seat}. Must be A-F.")
-        
+
         logfire.info(
             "Seat selection validated",
             seat=str(result),
             seat_type=result.seat_type.value,
-            has_extra_legroom=result.has_extra_legroom
+            has_extra_legroom=result.has_extra_legroom,
         )
-        
+
         return result

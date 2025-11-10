@@ -18,18 +18,21 @@ from app.utils.usage_utils import get_usage_stats
 
 
 # Global usage limits for seat selection
-booking_usage_limits = UsageLimits(request_limit=10, output_tokens_limit=500, total_tokens_limit=1000)
+booking_usage_limits = UsageLimits(
+    request_limit=10, output_tokens_limit=500, total_tokens_limit=1000
+)
 
 
 # ------------------------------------------------------------------------------
 # ✅ Seat Selection (with retry)
 # ------------------------------------------------------------------------------
 
+
 async def select_seat_with_retry(
     usage: RunUsage | None = None,
     max_attempts: int = 3,
     seat_input: str | None = None,
-    message_history: List[ModelMessage] | None = None
+    message_history: List[ModelMessage] | None = None,
 ) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
     with logfire.span("select_seat_with_retry"):
         history = message_history or []
@@ -49,11 +52,8 @@ async def select_seat_with_retry(
 
 
 async def _seat_selection_attempt(
-    history: List[ModelMessage],
-    usage: RunUsage,
-    seat_string: str | None = None
+    history: List[ModelMessage], usage: RunUsage, seat_string: str | None = None
 ) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
-
     if not seat_string:
         return None, history, usage
 
@@ -65,8 +65,12 @@ async def _seat_selection_attempt(
             usage_limits=booking_usage_limits,
         )
 
-        if hasattr(result, 'data') and isinstance(result.data, dict) and 'reason' in result.data:
-            logfire.warning("Seat selection failed", reason=result.data['reason'])
+        if (
+            hasattr(result, "data")
+            and isinstance(result.data, dict)
+            and "reason" in result.data
+        ):
+            logfire.warning("Seat selection failed", reason=result.data["reason"])
             return None, result.all_messages(), result.usage
 
         if isinstance(result.output, SeatPreference):
@@ -86,7 +90,7 @@ async def _seat_selection_attempt(
 
 
 async def buy_tickets(flight: FlightDetails, seat: SeatPreference) -> Dict[str, str]:
-    with logfire.span('buy_tickets'):
+    with logfire.span("buy_tickets"):
         confirmation = _generate_confirmation()
         now = datetime.now().isoformat()
 
@@ -112,14 +116,15 @@ async def buy_tickets(flight: FlightDetails, seat: SeatPreference) -> Dict[str, 
 
 
 def _generate_confirmation() -> str:
-    letters = ''.join(random.choices(string.ascii_uppercase, k=3))
-    numbers = ''.join(random.choices(string.digits, k=3))
+    letters = "".join(random.choices(string.ascii_uppercase, k=3))
+    numbers = "".join(random.choices(string.digits, k=3))
     return f"{letters}{numbers}"
 
 
 # ------------------------------------------------------------------------------
 # ✅ Full Booking Workflow
 # ------------------------------------------------------------------------------
+
 
 @logfire.instrument("complete_booking_workflow", extract_args=True)
 async def complete_booking_workflow(
@@ -129,7 +134,6 @@ async def complete_booking_workflow(
     max_seat_retries: int = 3,
     usage: RunUsage | None = None,
 ) -> Dict:
-
     history: List[ModelMessage] = []
     current_usage = usage or RunUsage()
 
@@ -141,26 +145,28 @@ async def complete_booking_workflow(
                 return {
                     "status": "error",
                     "reason": search_result.message,
-                    "usage_stats": get_usage_stats(current_usage), 
+                    "usage_stats": get_usage_stats(current_usage),
                     "timestamp": datetime.now().isoformat(),
                 }
             available_flights = search_result.flights
 
         if not available_flights:
             return {
-                "status": "error", 
+                "status": "error",
                 "reason": "No flights available",
-                "usage_stats": get_usage_stats(current_usage),  
+                "usage_stats": get_usage_stats(current_usage),
                 "timestamp": datetime.now().isoformat(),
             }
 
         # STEP 2: Pick the actual flight from available_flights
-        flight = _match_flight(search_result if 'search_result' in locals() else None, available_flights)
+        flight = _match_flight(
+            search_result if "search_result" in locals() else None, available_flights
+        )
         if not flight:
             return {
                 "status": "error",
-                "reason": "No suitable flight found", 
-                "usage_stats": get_usage_stats(current_usage),  
+                "reason": "No suitable flight found",
+                "usage_stats": get_usage_stats(current_usage),
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -169,7 +175,7 @@ async def complete_booking_workflow(
             current_usage,
             max_attempts=max_seat_retries,
             seat_input=seat_preference_prompt,
-            message_history=history
+            message_history=history,
         )
 
         # STEP 4: Purchase ticket
@@ -182,8 +188,8 @@ async def complete_booking_workflow(
             "usage_stats": get_usage_stats(current_usage),
             "workflow_steps": {
                 "seat_selection_attempts": max_seat_retries,
-                "total_duration": getattr(current_usage, 'total_duration', 0)
-            }
+                "total_duration": getattr(current_usage, "total_duration", 0),
+            },
         }
 
     except Exception as e:
@@ -191,20 +197,21 @@ async def complete_booking_workflow(
         return {
             "status": "error",
             "reason": str(e),
-            "usage_stats": get_usage_stats(current_usage), 
+            "usage_stats": get_usage_stats(current_usage),
             "timestamp": datetime.now().isoformat(),
         }
 
 
-def _match_flight(
-    search_result, flights: List[FlightDetails]
-) -> FlightDetails | None:
-
+def _match_flight(search_result, flights: List[FlightDetails]) -> FlightDetails | None:
     # If search_result is None or has no flights, just return the first flight
-    if not search_result or not hasattr(search_result, 'flights') or not search_result.flights:
+    if (
+        not search_result
+        or not hasattr(search_result, "flights")
+        or not search_result.flights
+    ):
         return flights[0] if flights else None
 
-    best = getattr(search_result, 'best_value_flight', None) or search_result.flights[0]
+    best = getattr(search_result, "best_value_flight", None) or search_result.flights[0]
 
     for f in flights:
         if f.airline == best.airline and f.flight_number == best.flight_number:
@@ -217,6 +224,7 @@ def _match_flight(
 # ✅ Quick Booking (Shortcut for simple use cases)
 # ------------------------------------------------------------------------------
 
+
 @logfire.instrument("quick_booking", extract_args=True)
 async def quick_booking(
     origin: str,
@@ -226,9 +234,8 @@ async def quick_booking(
     seat_preference: str | None = None,
     passengers: int = 1,
     flight_class: str = "economy",
-    usage: RunUsage | None = None
+    usage: RunUsage | None = None,
 ) -> Dict:
-
     try:
         date = datetime.strptime(departure_date, "%Y-%m-%d").date()
     except ValueError:
@@ -244,12 +251,12 @@ async def quick_booking(
         destination=destination.upper(),
         departure_date=date,
         passengers=passengers,
-        flight_class=flight_class
+        flight_class=flight_class,
     )
 
     return await complete_booking_workflow(
         search_request=req,
         available_flights=available_flights,
         seat_preference_prompt=seat_preference,
-        usage=usage
+        usage=usage,
     )

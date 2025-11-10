@@ -11,9 +11,11 @@ from app.models.flight_models import FlightSummary
 @dataclass
 class SummarizeDeps:
     """Dependencies for the summarize agent."""
+
     search_request: FlightSearchRequest
     all_flights: List[FlightDetails]
     search_metadata: dict = None
+
 
 # Summarize Agent
 summarize_agent = Agent[SummarizeDeps, FlightSummary](
@@ -35,14 +37,14 @@ async def get_flight_analytics(ctx: RunContext[SummarizeDeps]) -> dict:
     """Get analytics about the available flights."""
     with logfire.span("get_flight_analytics"):
         flights = ctx.deps.all_flights
-        
+
         if not flights:
             return {"message": "No flights to analyze"}
-        
+
         prices = [flight.price for flight in flights]
         airlines = list(set(flight.airline for flight in flights))
         direct_flights = [f for f in flights if f.is_direct]
-        
+
         return {
             "total_flights": len(flights),
             "price_min": min(prices),
@@ -60,7 +62,7 @@ async def add_summary_context(ctx: RunContext[SummarizeDeps]) -> str:
     with logfire.span("add_summary_context"):
         request = ctx.deps.search_request
         flights = ctx.deps.all_flights
-        
+
         context = f"""
         SEARCH CONTEXT:
         - Route: {request.origin} → {request.destination}
@@ -74,5 +76,5 @@ async def add_summary_context(ctx: RunContext[SummarizeDeps]) -> str:
         - Value-based recommendations
         - Timing and convenience factors
         """
-        
+
         return context

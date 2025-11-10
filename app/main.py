@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
@@ -7,7 +8,7 @@ import datetime
 import streamlit as st
 import logfire
 
-from app. models.flight_models import FlightClass, FlightSearchRequest
+from app.models.flight_models import FlightClass, FlightSearchRequest
 from app.utils.logging import setup_logfire
 from app.services.booking_services import complete_booking_workflow
 
@@ -23,11 +24,12 @@ def setup_streamlit_app():
         page_title="✈️ FlightFinder Pro",
         page_icon="✈️",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
     )
-    
+
     # Custom CSS for better styling
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     .main-header {
         font-size: 3rem;
@@ -63,7 +65,9 @@ def setup_streamlit_app():
         background-color: #f8f9fa;
     }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 @logfire.instrument("render_sidebar")
@@ -71,78 +75,79 @@ def render_sidebar():
     """Render the configuration sidebar."""
     with st.sidebar:
         st.header("⚙️ Booking Settings")
-        
+
         st.markdown("---")
-        
+
         # Settings
         default_passengers = st.number_input(
-            "Passengers", 
-            min_value=1, 
-            max_value=9, 
-            value=1,
-            help="Number of passengers"
+            "Passengers", min_value=1, max_value=9, value=1, help="Number of passengers"
         )
-        
+
         flight_class = st.selectbox(
             "Flight Class",
             options=[fc.value for fc in FlightClass],
             index=0,
-            help="Preferred flight class"
+            help="Preferred flight class",
         )
-        
+
         max_seat_attempts = st.slider(
             "Max Seat Selection Attempts",
             min_value=1,
             max_value=5,
             value=3,
-            help="Number of attempts for AI to find your preferred seat"
+            help="Number of attempts for AI to find your preferred seat",
         )
-        
+
         return {
             "default_passengers": default_passengers,
             "flight_class": FlightClass(flight_class),
-            "max_seat_attempts": max_seat_attempts
+            "max_seat_attempts": max_seat_attempts,
         }
 
 
 @logfire.instrument("render_booking_form")
 def render_booking_form(settings: dict):
     """Render the complete booking form."""
-    st.markdown('<div class="main-header">✈️ FlightFinder Pro</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subheader">Complete AI-Powered Flight Booking</div>', unsafe_allow_html=True)
-    
+    st.markdown(
+        '<div class="main-header">✈️ FlightFinder Pro</div>', unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="subheader">Complete AI-Powered Flight Booking</div>',
+        unsafe_allow_html=True,
+    )
+
     st.markdown("---")
-    
+
     st.header("🔍 Book Your Flight")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         origin = st.text_input(
-            "Departure Airport Code", 
+            "Departure Airport Code",
             "SFO",
-            help="3-letter airport code (e.g., SFO, JFK, LAX)"
+            help="3-letter airport code (e.g., SFO, JFK, LAX)",
         ).upper()
-        
+
         departure_date = st.date_input(
             "Departure Date",
             datetime.date.today() + datetime.timedelta(days=30),
-            help="Select your departure date"
+            help="Select your departure date",
         )
-    
+
     with col2:
         destination = st.text_input(
-            "Arrival Airport Code", 
+            "Arrival Airport Code",
             "JFK",
-            help="3-letter airport code (e.g., SFO, JFK, LAX)"
+            help="3-letter airport code (e.g., SFO, JFK, LAX)",
         ).upper()
-        
+
         seat_preference = st.text_input(
             "Seat Preference (Optional)",
             placeholder="e.g., 'window seat', '12A', 'aisle seat near front'",
-            help="Describe your preferred seat"
+            help="Describe your preferred seat",
         )
-    
+
     return origin, destination, departure_date, seat_preference, settings
 
 
@@ -152,13 +157,13 @@ def render_booking_result(result):
     if result["status"] == "error":
         st.error(f"❌ {result['reason']}")
         return
-    
+
     # Successful booking
     st.success("🎉 Booking Confirmed!")
-    
+
     # Booking details
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.subheader("📋 Flight Details")
         st.write(f"**Flight:** {result['flight_number']}")
@@ -166,7 +171,7 @@ def render_booking_result(result):
         st.write(f"**Route:** {result['route']}")
         st.write(f"**Date:** {result['date']}")
         st.write(f"**Time:** {result['departure_time']} - {result['arrival_time']}")
-    
+
     with col2:
         st.subheader("💺 Seat & Payment")
         st.write(f"**Seat:** {result['seat']}")
@@ -174,17 +179,19 @@ def render_booking_result(result):
         st.write(f"**Extra Legroom:** {'Yes' if result['has_extra_legroom'] else 'No'}")
         st.write(f"**Price:** ${result['price']}")
         st.write(f"**Confirmation:** {result['confirmation_number']}")
-    
+
     # Workflow stats
     st.subheader("📊 Booking Summary")
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Seat Attempts", result["workflow_steps"]["seat_selection_attempts"])
     with col2:
-        st.metric("Total Duration", f"{result['workflow_steps']['total_duration']:.1f}s")
+        st.metric(
+            "Total Duration", f"{result['workflow_steps']['total_duration']:.1f}s"
+        )
     with col3:
         st.metric("Status", result["status"].title())
-    
+
     # Purchase info
     st.info(f"🕒 Booked at: {result['purchase_time']}")
 
@@ -195,34 +202,40 @@ async def main_application_flow():
     # Setup
     setup_streamlit_app()
     sidebar_settings = render_sidebar()
-    
+
     try:
         # Booking form
-        origin, destination, departure_date, seat_preference, settings = render_booking_form(sidebar_settings)
-        
-        book_button = st.button("🚀 Complete Booking", type="primary", use_container_width=True)
-        
+        origin, destination, departure_date, seat_preference, settings = (
+            render_booking_form(sidebar_settings)
+        )
+
+        book_button = st.button(
+            "🚀 Complete Booking", type="primary", use_container_width=True
+        )
+
         # Complete booking workflow
         if book_button:
-            with st.spinner("🔄 Processing complete booking... This may take a minute."):
+            with st.spinner(
+                "🔄 Processing complete booking... This may take a minute."
+            ):
                 search_request = FlightSearchRequest(
                     origin=origin,
                     destination=destination,
                     departure_date=departure_date,
                     passengers=settings["default_passengers"],
-                    flight_class=settings["flight_class"]
+                    flight_class=settings["flight_class"],
                 )
-                
+
                 # Use the complete booking workflow WITHOUT available_flights
                 result = await complete_booking_workflow(
                     search_request=search_request,
                     available_flights=None,  # This will trigger flight search
                     seat_preference_prompt=seat_preference,
-                    max_seat_retries=settings["max_seat_attempts"]
+                    max_seat_retries=settings["max_seat_attempts"],
                 )
-                
+
                 render_booking_result(result)
-        
+
         # How it works info
         with st.sidebar:
             st.markdown("---")
@@ -236,7 +249,7 @@ async def main_application_flow():
             
             *API keys are configured via .env file*
             """)
-    
+
     except Exception as e:
         logfire.error("Application error", error=str(e))
         st.error(f"🚨 An unexpected error occurred: {str(e)}")

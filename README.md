@@ -14,5 +14,5 @@ playwright install
 
 Run the app using 
 ```bash 
-    streamlit run yourscript.py
+    streamlit run app/main.py
 ```
