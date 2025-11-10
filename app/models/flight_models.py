@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Literal, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
@@ -33,7 +33,7 @@ class FlightDetails(BaseModel):
     departure_time: str
     arrival_time: str
     duration: str
-    date: datetime.date
+    date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     flight_class: FlightClass = Field(default=FlightClass.ECONOMY)
     aircraft: str | None = None
     stops: int = Field(default=0, ge=0)
@@ -42,7 +42,7 @@ class FlightDetails(BaseModel):
     @field_validator('departure_time', 'arrival_time')
     def validate_time_format(cls, v):
         try: 
-            datetime.datetime.strptime(v, '%H:%M')
+            datetime.strptime(v, '%H:%M')
             return v 
         except ValueError: 
             raise ValueError('Time must be in HH:MM format')
@@ -57,8 +57,8 @@ class FlightSearchRequest(BaseModel):
     
     origin: str = Field(..., pattern=r'^[A-Z]{3}$')
     destination: str = Field(..., pattern=r'^[A-Z]{3}$')
-    departure_date: datetime.date
-    return_date: datetime.date  | None = None
+    departure_date: date
+    return_date: date  | None = None
     passengers: int 
     flight_class: FlightClass = Field(default=FlightClass.ECONOMY)
     max_price: float  | None = Field(None, gt=0)
@@ -98,14 +98,14 @@ class NoFlightFound(BaseModel):
     message: str = "No flights found matching your criteria."
     search_request: FlightSearchRequest
     suggestions: List[str] 
-    alternative_dates: List[datetime.date]
+    alternative_dates: List[date]
 
 
 class SeatPreference(BaseModel):
     """Seat selection preferences."""
     model_config = ConfigDict(str_strip_whitespace=True)
      
-    row: int = Field(..., ge=1, le=30, description="Row number between 1 and 30")
+    row: int = Field(..., ge=1, le=410, description="Row number between 1 and 410")
     seat: Literal["A", "B", "C", "D", "E", "F"] = Field(description="Seat position")
     seat_type: SeatType = Field(description='Type of seat')
     
@@ -143,7 +143,7 @@ class BookingConfirmation(BaseModel):
     passengers: int = Field(1, ge=1, le=9)
     total_price: float
     confirmation_number: str = Field(..., pattern=r'^[A-Z0-9]{6, 10}$')
-    booking_time: datetime.datetime.now(timezone.utc)
+    booking_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: FlightStatus = Field(default = FlightStatus.BOOKED)
     
     

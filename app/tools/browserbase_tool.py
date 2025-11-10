@@ -33,7 +33,7 @@ def browserbase_tool(url: str) -> str:
                 content = html2text(page.content())
                 browser.close()
                 
-                logfire.infor('Successfully loaded page', url=url)
+                logfire.info('Successfully loaded page', url=url)
                 
                 return content
         except Exception as e:

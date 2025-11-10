@@ -2,11 +2,8 @@ import asyncio
 import datetime
 import streamlit as st
 import os
-import time
-from typing import Optional
 import logfire
 
-from app.services.flight_service import FlightService
 from app.models.flight_models import (
     FlightSearchRequest,
     FlightClass,
@@ -14,6 +11,8 @@ from app.models.flight_models import (
 )
 from app.utils.config import settings
 from app.utils.logging import setup_logfire
+from app.services.flight_services import search_flights
+from app.services.booking_services import select_seat_with_retry
 
 
 # Initialize logging
@@ -301,9 +300,6 @@ async def main_application_flow():
         return
     
     try:
-        # Initialize services
-        flight_service = FlightService()
-        
         # Search form
         origin, destination, departure_date, return_date, settings = render_search_form(sidebar_settings)
         search_button = st.button("🚀 Search Flights", type="primary", use_container_width=True)
@@ -321,7 +317,7 @@ async def main_application_flow():
                     direct_only=settings["direct_only"]
                 )
                 
-                result = await flight_service.search_flights(search_request)
+                result = await search_flights(search_request)
                 render_flight_results(result)
                 
                 # Store result in session state for seat selection
@@ -334,14 +330,14 @@ async def main_application_flow():
             
             if select_seat_btn and seat_preference:
                 with st.spinner("💺 Processing seat selection..."):
-                    seat = await flight_service.select_seat(seat_preference)
+                    seat = await select_seat_with_retry(seat_preference)
                     render_seat_result(seat)
         
         # Usage statistics
         with st.sidebar:
             st.markdown("---")
             st.subheader("📊 Usage")
-            usage_stats = flight_service.get_usage_stats()
+            usage_stats = get_usage_stats()
             st.metric("API Requests", usage_stats["total_requests"])
             st.metric("Total Tokens", f"{usage_stats['total_tokens']:,}")
             st.metric("Total Duration", f"{usage_stats['total_duration']:.1f}s")
