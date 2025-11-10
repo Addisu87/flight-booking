@@ -65,8 +65,9 @@ class FlightSearchRequest(BaseModel):
     direct_only: bool = False
     
     @field_validator('return_date')
-    def validate_return_date(cls, v, values):
-        if v and 'departure_date' in values and v < values['departure_date']:
+    def validate_return_date(cls, v, info):
+        # In Pydantic v2, use info.data instead of values
+        if v and 'departure_date' in info.data and v < info.data['departure_date']:
             raise ValueError('Return date must be after departure date')
         return v
     
@@ -98,7 +99,7 @@ class NoFlightFound(BaseModel):
     message: str = "No flights found matching your criteria."
     search_request: FlightSearchRequest
     suggestions: List[str] 
-    alternative_dates: List[date]
+    alternative_dates: List[str] = Field(default_factory=list)
 
 
 class SeatPreference(BaseModel):

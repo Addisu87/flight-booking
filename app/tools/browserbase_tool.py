@@ -1,12 +1,10 @@
 import logfire 
 from time import sleep
-from pydantic_ai.tools import Tool
 from playwright.sync_api import sync_playwright
 from html2text import html2text
 from app.utils.config import settings
 
 
-@Tool
 def browserbase_tool(url: str) -> str:
     if not settings.BROWSERBASE_API_KEY:
         raise ValueError("BROWSERBASE_API_KEY is not set")

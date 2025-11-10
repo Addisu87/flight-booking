@@ -10,3 +10,9 @@ A flight booking agent built with Pydantic AI, Browserbase, and Kayak integratio
 ```bash
 pip install -r requirements.txt
 playwright install
+
+
+Run the app using 
+```bash 
+    streamlit run yourscript.py
+```

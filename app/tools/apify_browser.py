@@ -1,12 +1,11 @@
 import logfire
 import requests
-from pydantic_ai.tools import Tool
 from html2text import html2text
 from app.utils.config import settings
 
 APIFY_ACTOR_ID = "apify/website-content-crawler"
 
-@Tool
+
 def apify_browser_tool(url: str) -> str:
     if not settings.APIFY_API_TOKEN:
         raise ValueError("APIFY_API_TOKEN is not set")

@@ -1,9 +1,7 @@
 import logfire
-from pydantic_ai.tools import Tool
 from app.models.flight_models import FlightSearchRequest
 
 
-@Tool
 def kayak_search_tool(search_request: FlightSearchRequest) -> str:
     base_url = f"https://www.kayak.com/flights/{search_request.origin}-{search_request.destination}/{search_request.departure_date}"
     

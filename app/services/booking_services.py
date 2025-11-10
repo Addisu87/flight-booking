@@ -133,16 +133,18 @@ async def complete_booking_workflow(
     current_usage = usage or RunUsage()
 
     try:
+        # If no available_flights provided, search for them
+        if available_flights is None:
+            search_result = await search_flights(search_request, current_usage)
+            if hasattr(search_result, "message"):
+                return _error(search_result.message, current_usage)
+            available_flights = search_result.flights
+
         if not available_flights:
             return _error("No flights available", current_usage)
 
-        # STEP 1: Run flight search
-        search_result = await search_flights(search_request, current_usage)
-        if hasattr(search_result, "message"):
-            return _error(search_result.message, current_usage)
-
         # STEP 2: Pick the actual flight from available_flights
-        flight = _match_flight(search_result, available_flights)
+        flight = _match_flight(search_result if 'search_result' in locals() else None, available_flights)
         if not flight:
             return _error("No suitable flight found", current_usage)
 
@@ -177,8 +179,9 @@ def _match_flight(
     search_result, flights: List[FlightDetails]
 ) -> FlightDetails | None:
 
-    if not search_result.flights:
-        return None
+    # If search_result is None or has no flights, just return the first flight
+    if not search_result or not hasattr(search_result, 'flights') or not search_result.flights:
+        return flights[0] if flights else None
 
     best = getattr(search_result, 'best_value_flight', None) or search_result.flights[0]
 
@@ -187,7 +190,6 @@ def _match_flight(
             return f
 
     return flights[0] if flights else None
-
 
 def _error(reason: str, usage: RunUsage) -> Dict:
     return {

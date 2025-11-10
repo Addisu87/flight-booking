@@ -200,9 +200,6 @@ async def main_application_flow():
         # Booking form
         origin, destination, departure_date, seat_preference, settings = render_booking_form(sidebar_settings)
         
-        # For demo purposes - you would replace this with actual flight data
-        available_flights = []  # This would come from your flight search
-        
         book_button = st.button("🚀 Complete Booking", type="primary", use_container_width=True)
         
         # Complete booking workflow
@@ -216,10 +213,10 @@ async def main_application_flow():
                     flight_class=settings["flight_class"]
                 )
                 
-                # Use the complete booking workflow
+                # Use the complete booking workflow WITHOUT available_flights
                 result = await complete_booking_workflow(
                     search_request=search_request,
-                    available_flights=available_flights,  # You'll need to populate this
+                    available_flights=None,  # This will trigger flight search
                     seat_preference_prompt=seat_preference,
                     max_seat_retries=settings["max_seat_attempts"]
                 )
