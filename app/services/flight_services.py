@@ -93,17 +93,13 @@ async def _run_pipeline(
 async def _fetch_page(req: FlightSearchRequest) -> str | NoFlightFound:
     with logfire.span("kayak_url"):
         url = kayak_search_tool(req)
-        print(f"🔍 DEBUG: Generated Kayak URL: {url}")
         logfire.debug("Generated Kayak URL", url=url)
 
     with logfire.span("browserbase_fetch"):
-        print(f"🔍 DEBUG: Calling apify_browser_tool with URL: {url}")
         content = apify_browser_tool(url)
-        print(f"🔍 DEBUG: apify_browser_tool returned: {content[:200]}...")
 
-        if content.startswith("Error") or content.startswith("Apify"):
-            error_msg = f"Apify failed: {content}"
-            print(f"❌ DEBUG: {error_msg}")
+        # Check for failures more robustly
+        if not content or "Apify" in content or "Error" in content:
             return NoFlightFound(
                 search_request=req,
                 message="Failed to load flight results.",
@@ -111,8 +107,8 @@ async def _fetch_page(req: FlightSearchRequest) -> str | NoFlightFound:
                 alternative_dates=[],
             )
 
-    print(f"✅ DEBUG: Successfully fetched page content, length: {len(content)}")
     return content
+
 
 
 # --------------------------------------------------------------------
