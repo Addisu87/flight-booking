@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     DEEPSEEK_API_KEY: str | None = None
     BROWSERBASE_API_KEY: str | None = None
+    BROWSERBASE_PROJECT_ID: str | None = None
     APIFY_API_TOKEN: str | None = None
     LOGFIRE_TOKEN: str | None = None
     MAXIMUM_RETRIES: int = 2
