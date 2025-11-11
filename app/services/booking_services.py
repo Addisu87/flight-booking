@@ -2,20 +2,13 @@ import random
 import string
 import logfire
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Optional
 
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.messages import ModelMessage
-
 from app.agents.seat_selection_agent import seat_selection_agent
-from app.models.flight_models import (
-    FlightDetails,
-    FlightSearchRequest,
-    SeatPreference,
-)
+from app.models.flight_models import FlightDetails, FlightSearchRequest, SeatPreference
 from app.services.flight_services import search_flights
 from app.utils.usage_utils import get_usage_stats
-
 
 # Global usage limits for seat selection
 booking_usage_limits = UsageLimits(
@@ -23,133 +16,54 @@ booking_usage_limits = UsageLimits(
 )
 
 
-# ------------------------------------------------------------------------------
-# ✅ Seat Selection (with retry)
-# ------------------------------------------------------------------------------
+async def select_seat(seat_input: str, usage: RunUsage) -> SeatPreference:
+    """Select seat with single attempt."""
+    result = await seat_selection_agent.run(
+        seat_input,
+        usage=usage,
+        usage_limits=booking_usage_limits,
+    )
+    
+    if isinstance(result.output, SeatPreference):
+        return result.output
+    
+    logfire.warning("Seat selection failed", reason=getattr(result.data, 'reason', 'Unknown'))
+    raise ValueError("Failed to select seat")
 
 
-async def select_seat_with_retry(
-    usage: RunUsage | None = None,
-    max_attempts: int = 3,
-    seat_input: str | None = None,
-    message_history: List[ModelMessage] | None = None,
-) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
-    with logfire.span("select_seat_with_retry"):
-        history = message_history or []
-        current_usage = usage or RunUsage()
-
-        for attempt in range(1, max_attempts + 1):
-            seat, history, current_usage = await _seat_selection_attempt(
-                history, current_usage, seat_input if attempt == 1 else None
-            )
-            if seat:
-                return seat, history, current_usage
-
-        # Fallback
-        fallback = SeatPreference(row=10, seat="C")
-        logfire.info("Seat selection fallback used", fallback=str(fallback))
-        return fallback, history, current_usage
+def create_booking(flight: FlightDetails, seat: SeatPreference) -> dict:
+    """Create booking confirmation."""
+    confirmation = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    
+    return {
+        "confirmation_number": confirmation,
+        "flight_number": flight.flight_number,
+        "airline": flight.airline,
+        "price": flight.price,
+        "seat": str(seat),
+        "route": f"{flight.origin} → {flight.destination}",
+        "departure_time": flight.departure_time,
+        "status": "confirmed",
+        "timestamp": datetime.now().isoformat(),
+        "seat_type": seat.seat_type.value,
+        "has_extra_legroom": seat.has_extra_legroom,
+    }
 
 
-async def _seat_selection_attempt(
-    history: List[ModelMessage], usage: RunUsage, seat_string: str | None = None
-) -> Tuple[SeatPreference | None, List[ModelMessage], RunUsage]:
-    if not seat_string:
-        return None, history, usage
-
-    try:
-        result = await seat_selection_agent.run(
-            seat_string,
-            message_history=history.copy(),
-            usage=usage,
-            usage_limits=booking_usage_limits,
-        )
-
-        if (
-            hasattr(result, "data")
-            and isinstance(result.data, dict)
-            and "reason" in result.data
-        ):
-            logfire.warning("Seat selection failed", reason=result.data["reason"])
-            return None, result.all_messages(), result.usage
-
-        if isinstance(result.output, SeatPreference):
-            return result.output, result.all_messages(), result.usage
-
-        logfire.warning("Seat selection returned unexpected output type")
-        return None, result.all_messages(), result.usage
-
-    except Exception as e:
-        logfire.error("Seat selection error", error=str(e))
-        return None, history, usage
-
-
-# ------------------------------------------------------------------------------
-# ✅ Ticket Purchase
-# ------------------------------------------------------------------------------
-
-
-async def buy_tickets(flight: FlightDetails, seat: SeatPreference) -> Dict[str, str]:
-    with logfire.span("buy_tickets"):
-        confirmation = _generate_confirmation()
-        now = datetime.now().isoformat()
-
-        purchase = {
-            "flight_number": flight.flight_number,
-            "airline": flight.airline,
-            "seat": str(seat),
-            "price": flight.price,
-            "confirmation_number": confirmation,
-            "status": "confirmed",
-            "route": f"{flight.origin} → {flight.destination}",
-            "date": str(flight.date),
-            "departure_time": flight.departure_time,
-            "arrival_time": flight.arrival_time,
-            "purchase_time": now,
-            "passenger_count": 1,
-            "seat_type": seat.seat_type.value,
-            "has_extra_legroom": seat.has_extra_legroom,
-        }
-
-        logfire.info("Ticket purchase completed", confirmation=confirmation)
-        return purchase
-
-
-def _generate_confirmation() -> str:
-    letters = "".join(random.choices(string.ascii_uppercase, k=3))
-    numbers = "".join(random.choices(string.digits, k=3))
-    return f"{letters}{numbers}"
-
-
-# ------------------------------------------------------------------------------
-# ✅ Full Booking Workflow
-# ------------------------------------------------------------------------------
-
-
-@logfire.instrument("complete_booking_workflow", extract_args=True)
 async def complete_booking_workflow(
     search_request: FlightSearchRequest,
-    available_flights: List[FlightDetails],
-    seat_preference_prompt: str | None = None,
-    max_seat_retries: int = 3,
-    usage: RunUsage | None = None,
-) -> Dict:
-    history: List[ModelMessage] = []
+    available_flights: Optional[List[FlightDetails]] = None,
+    seat_preference_prompt: Optional[str] = None,
+    usage: Optional[RunUsage] = None,
+) -> dict:
+    """Complete booking workflow."""
     current_usage = usage or RunUsage()
 
     try:
-        # If no available_flights provided, search for them
         if available_flights is None:
             search_result = await search_flights(search_request, current_usage)
-            if hasattr(search_result, "message"):
-                return {
-                    "status": "error",
-                    "reason": search_result.message,
-                    "usage_stats": get_usage_stats(current_usage),
-                    "timestamp": datetime.now().isoformat(),
-                }
-            available_flights = search_result.flights
-
+            available_flights = getattr(search_result, 'flights', [])
+        
         if not available_flights:
             return {
                 "status": "error",
@@ -158,38 +72,15 @@ async def complete_booking_workflow(
                 "timestamp": datetime.now().isoformat(),
             }
 
-        # STEP 2: Pick the actual flight from available_flights
-        flight = _match_flight(
-            search_result if "search_result" in locals() else None, available_flights
-        )
-        if not flight:
-            return {
-                "status": "error",
-                "reason": "No suitable flight found",
-                "usage_stats": get_usage_stats(current_usage),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        # STEP 3: Seat selection with retries
-        seat, history, current_usage = await select_seat_with_retry(
-            current_usage,
-            max_attempts=max_seat_retries,
-            seat_input=seat_preference_prompt,
-            message_history=history,
-        )
-
-        # STEP 4: Purchase ticket
-        purchase = await buy_tickets(flight, seat)
+        flight = available_flights[0]
+        seat = await select_seat(seat_preference_prompt, current_usage) if seat_preference_prompt else None
+        booking = create_booking(flight, seat) if seat else create_booking(flight, SeatPreference(row=1, seat="A"))
 
         return {
-            **purchase,
+            **booking,
             "status": "success",
             "search_criteria": search_request.model_dump(),
             "usage_stats": get_usage_stats(current_usage),
-            "workflow_steps": {
-                "seat_selection_attempts": max_seat_retries,
-                "total_duration": getattr(current_usage, "total_duration", 0),
-            },
         }
 
     except Exception as e:
@@ -200,63 +91,3 @@ async def complete_booking_workflow(
             "usage_stats": get_usage_stats(current_usage),
             "timestamp": datetime.now().isoformat(),
         }
-
-
-def _match_flight(search_result, flights: List[FlightDetails]) -> FlightDetails | None:
-    # If search_result is None or has no flights, just return the first flight
-    if (
-        not search_result
-        or not hasattr(search_result, "flights")
-        or not search_result.flights
-    ):
-        return flights[0] if flights else None
-
-    best = getattr(search_result, "best_value_flight", None) or search_result.flights[0]
-
-    for f in flights:
-        if f.airline == best.airline and f.flight_number == best.flight_number:
-            return f
-
-    return flights[0] if flights else None
-
-
-# ------------------------------------------------------------------------------
-# ✅ Quick Booking (Shortcut for simple use cases)
-# ------------------------------------------------------------------------------
-
-
-@logfire.instrument("quick_booking", extract_args=True)
-async def quick_booking(
-    origin: str,
-    destination: str,
-    departure_date: str,
-    available_flights: List[FlightDetails],
-    seat_preference: str | None = None,
-    passengers: int = 1,
-    flight_class: str = "economy",
-    usage: RunUsage | None = None,
-) -> Dict:
-    try:
-        date = datetime.strptime(departure_date, "%Y-%m-%d").date()
-    except ValueError:
-        return {
-            "status": "error",
-            "reason": f"Invalid date: {departure_date}",
-            "usage_stats": get_usage_stats(usage or RunUsage()),
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    req = FlightSearchRequest(
-        origin=origin.upper(),
-        destination=destination.upper(),
-        departure_date=date,
-        passengers=passengers,
-        flight_class=flight_class,
-    )
-
-    return await complete_booking_workflow(
-        search_request=req,
-        available_flights=available_flights,
-        seat_preference_prompt=seat_preference,
-        usage=usage,
-    )

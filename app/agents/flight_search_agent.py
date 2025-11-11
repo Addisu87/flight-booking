@@ -39,26 +39,6 @@ flight_search_agent = Agent[FlightDeps, FlightSearchResult | NoFlightFound](
     tools=[kayak_search_tool, apify_browser_tool],
 )
 
-# Flight Extraction Agent
-flight_extraction_agent = Agent(
-    llm_model,
-    system_prompt="""
-    You are an expert at extracting flight information from web pages.
-    Extract all available flight details including:
-    - Airline name
-    - Flight number
-    - Price
-    - Origin and destination airports (as 3-letter codes)
-    - Departure and arrival times
-    - Duration
-    - Date
-    - Booking URL if available
-    
-    Be accurate and thorough in your extraction.
-    """,
-)
-
-
 @flight_search_agent.tool
 async def get_available_flights(ctx: RunContext[FlightDeps]) -> List[FlightDetails]:
     """Get the list of available flights that were previously extracted."""

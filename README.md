@@ -16,3 +16,6 @@ Run the app using
 ```bash 
     streamlit run app/main.py
 ```
+
+Workflow
+user search → generate Kayak URL → Apify scrape → flight extraction agent → flight analysis agent → summarize agent → seat selection → ticket purchase → final output

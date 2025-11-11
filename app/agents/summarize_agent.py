@@ -56,7 +56,7 @@ async def get_flight_analytics(ctx: RunContext[SummarizeDeps]) -> dict:
         }
 
 
-@summarize_agent.system_prompt_modifier
+@summarize_agent.tool
 async def add_summary_context(ctx: RunContext[SummarizeDeps]) -> str:
     """Add search context to the system prompt."""
     with logfire.span("add_summary_context"):
