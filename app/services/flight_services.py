@@ -2,6 +2,7 @@ import logfire
 from pydantic_ai.usage import RunUsage, UsageLimits
 from app.tools.kayak_tool import kayak_search_tool
 from app.tools.apify_browser import apify_browser_tool
+# from app.tools.browserbase_tool import browserbase_tool
 from app.agents.flight_extraction_agent import flight_extraction_agent
 from app.agents.flight_search_agent import flight_search_agent, FlightDeps
 from app.models.flight_models import FlightSearchRequest, NoFlightFound
@@ -29,7 +30,7 @@ async def search_flights(req: FlightSearchRequest, usage: RunUsage | None = None
         # 3. Analyze flights
         result = await flight_search_agent.run(
             f"Analyze flights {req.origin}→{req.destination}",
-            deps=FlightDeps(search_request=req, available_flights=extracted.output),
+            deps=FlightDeps(search_request=req, available_flights=extracted.output), # type: ignore
             usage=usage,
         )
         return result.output

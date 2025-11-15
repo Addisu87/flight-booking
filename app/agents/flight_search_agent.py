@@ -10,6 +10,7 @@ from app.models.flight_models import (
 )
 from app.tools.kayak_tool import kayak_search_tool
 from app.tools.apify_browser import apify_browser_tool
+# from app.tools.browserbase_tool import browserbase_tool
 from app.utils.config import settings
 from app.core.llm import llm_model
 import logfire

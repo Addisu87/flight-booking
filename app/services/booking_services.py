@@ -27,7 +27,7 @@ async def select_seat(seat_input: str, usage: RunUsage) -> SeatPreference:
     if isinstance(result.output, SeatPreference):
         return result.output
     
-    logfire.warning("Seat selection failed", reason=getattr(result.data, 'reason', 'Unknown'))
+    logfire.warning("Seat selection failed", reason=getattr(result.output, 'reason', 'Unknown'))
     raise ValueError("Failed to select seat")
 
 
