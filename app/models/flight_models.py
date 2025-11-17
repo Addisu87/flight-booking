@@ -99,7 +99,12 @@ class FlightSearchResult(BaseModel):
     def calculate_analytics(self):
         """Calculate search analytics"""
         if self.flights:
-            self.cheapest_flights = min(flight.price for flight in self.flights)
+            self.cheapest_flight = min(f.price for f in self.flights)
+            self.fastest_flight = min(
+                self.flights, key=lambda f: f.duration
+            ).flight_number
+            directs = [f for f in self.flights if f.is_direct]
+            self.best_value_flight = min(directs or self.flights, key=lambda f: f.price)
 
 
 class NoFlightFound(BaseModel):
@@ -120,15 +125,20 @@ class SeatPreference(BaseModel):
     seat: Literal["A", "B", "C", "D", "E", "F"] = Field(description="Seat position")
     seat_type: SeatType = Field(description="Type of seat")
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Automatically determine seat type
-        if not hasattr(self, "seat_type"):
-            self.seat_type = SeatType.WINDOW
-        elif self.seat in ["C", "D"]:
-            self.seat_type = SeatType.AISLE
-        else:
-            self.seat_type = SeatType.MIDDLE
+    @field_validator("seat_type", mode="before")
+    @classmethod
+    def auto_determine_seat_type(cls, v, info):
+        if v is not None:
+            return v
+        seat_map = {
+            "A": SeatType.WINDOW,
+            "F": SeatType.WINDOW,
+            "C": SeatType.AISLE,
+            "D": SeatType.AISLE,
+            "B": SeatType.MIDDLE,
+            "E": SeatType.MIDDLE,
+        }
+        return seat_map.get(info.data.get("seat"), SeatType.MIDDLE)
 
     @property
     def has_extra_legroom(self) -> bool:
@@ -146,19 +156,40 @@ class SeatSelectionFailed(BaseModel):
     reason: str
 
 
+# app/models/flight_models.py
+
+
 class BookingConfirmation(BaseModel):
     """Flight booking confirmation with full details."""
 
     model_config = ConfigDict(str_strip_whitespace=True, frozen=True)
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    flight: FlightDetails
-    seat: SeatPreference
+    flight: FlightDetails  # Keep nested structure
+    seat: SeatPreference | None  # Allow None for auto-assigned
     passengers: int = Field(1, ge=1, le=9)
     total_price: float
-    confirmation_number: str = Field(..., pattern=r"^[A-Z0-9]{6, 10}$")
+    confirmation_number: str = Field(..., pattern=r"^[A-Z0-9]{6,10}$")
     booking_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: FlightStatus = Field(default=FlightStatus.BOOKED)
+
+    def model_dump_for_display(self) -> dict:
+        """Convert to flat dictionary for Streamlit UI."""
+        return {
+            "confirmation_number": self.confirmation_number,
+            "flight_number": self.flight.flight_number,
+            "airline": self.flight.airline,
+            "price": self.flight.price,
+            "seat": str(self.seat) if self.seat else "Auto-assigned",
+            "route": f"{self.flight.origin} → {self.flight.destination}",
+            "departure_time": self.flight.departure_time,
+            "status": self.status.value,
+            "timestamp": self.booking_time.isoformat(),
+            "seat_type": self.seat.seat_type.value
+            if self.seat and self.seat.seat_type
+            else None,
+            "has_extra_legroom": self.seat.has_extra_legroom if self.seat else False,
+        }
 
     @field_validator("total_price")
     def validate_total_price(cls, v, values):

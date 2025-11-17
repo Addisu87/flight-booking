@@ -5,6 +5,7 @@ from app.utils.config import settings
 def setup_logfire():
     """Initialize Logfire with configuration."""
 
+    # ✅ Minimal valid configuration
     logfire.configure(
         token=settings.LOGFIRE_TOKEN,
         service_name=settings.APP_NAME,
@@ -12,8 +13,6 @@ def setup_logfire():
     )
 
     # Instrument everything
-    logfire.instrument_pydantic()
-    logfire.instrument_httpx()
     logfire.instrument_pydantic_ai()
 
     return logfire

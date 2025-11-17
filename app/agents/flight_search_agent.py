@@ -8,84 +8,173 @@ from app.models.flight_models import (
     NoFlightFound,
     FlightSearchRequest,
 )
+
+# from pydantic_ai.usage import UsageLimits
 from app.tools.kayak_tool import kayak_search_tool
 from app.tools.apify_browser import apify_browser_tool
-# from app.tools.browserbase_tool import browserbase_tool
-from app.utils.config import settings
 from app.core.llm import llm_model
 import logfire
+
+# FLIGHT_SEARCH_USAGE_LIMITS = UsageLimits(
+#     request_limit=5, output_tokens_limit=1000, total_tokens_limit=2000
+# )
+
+# ✅ Usage limits for extraction
+# EXTRACTION_USAGE_LIMITS = UsageLimits(
+#     request_limit=3, output_tokens_limit=2000, total_tokens_limit=3000
+# )
 
 
 @dataclass
 class FlightDeps:
+    """Dependencies for flight search - only the search request."""
+
     search_request: FlightSearchRequest
-    available_flights: List[FlightDetails]
 
 
-# Flight Search Agent
+# Main Flight Search Agent - orchestrates the entire pipeline
 flight_search_agent = Agent[FlightDeps, FlightSearchResult | NoFlightFound](
     llm_model,
-    retries=settings.MAXIMUM_RETRIES,
+    retries=2,
     system_prompt="""
-    You are an intelligent flight search analyst. Your role is to:
-    1. Find the BEST flights matching the user's exact criteria
-    2. Provide a comprehensive analysis of options
-    3. Consider price, duration, stops, and timing
-    4. Highlight the best value option
-    5. Provide clear, actionable summary
+    You are an intelligent flight search analyst. Your workflow:
+    1. **ALWAYS** call `search_kayak_flights` tool first
+    2. **CHECK** if the returned list is empty `[]`
+    3. **IF EMPTY**: Immediately call `create_no_flights_response` tool and return its result
+    4. **IF NOT EMPTY**: Analyze flights and return a `FlightSearchResult` object
     
-    Always prioritize flights that exactly match the search criteria.
-    If no flights match, provide helpful suggestions and alternatives.
+    **NEVER** return plain text like "No flights found". 
+    **NEVER** fabricate flight data.
+    
+    Your two valid return types are:
+    - FlightSearchResult (when flights exist)
+    - NoFlightFound (when empty, created via tool)
     """,
-    tools=[kayak_search_tool, apify_browser_tool],
 )
 
+# Dedicated agent for extracting structured flights from HTML
+flight_extraction_agent = Agent[None, List[FlightDetails]](
+    llm_model,
+    system_prompt="""
+    Extract flight details from Kayak HTML content.
+    Look for: airline, flight number, price, duration, stops, origin/destination codes,
+    departure/arrival times, and booking URLs.
+    
+    Return a list of FlightDetails objects. If no flights found, return empty list.
+    Be precise with airport codes and times.
+    """,
+)
+
+
 @flight_search_agent.tool
-async def get_available_flights(ctx: RunContext[FlightDeps]) -> List[FlightDetails]:
-    """Get the list of available flights that were previously extracted."""
-    logfire.debug("Retrieving available flights", count=len(ctx.deps.available_flights))
-    return ctx.deps.available_flights
+async def create_no_flights_response(
+    ctx: RunContext[FlightDeps], reason: str
+) -> NoFlightFound:
+    """
+    Create a NoFlightFound response when no flights are available.
+    **ALWAYS use this tool when search_kayak_flights returns an empty list.**
+    """
+    return NoFlightFound(
+        search_request=ctx.deps.search_request,
+        message=reason,
+        suggestions=["Try different dates", "Check airport codes", "Try again later"],
+    )
+
+
+@flight_search_agent.tool
+async def search_kayak_flights(ctx: RunContext[FlightDeps]) -> List[FlightDetails]:
+    """
+    Search Kayak for flights. Returns empty list [] if none found.
+    **NEVER** return an error string - always return a list.
+    """
+    req = ctx.deps.search_request
+
+    with logfire.span("search_kayak_pipeline"):
+        url = kayak_search_tool(req)
+        logfire.info("Generated Kayak URL", url=url)
+
+        html_content = await apify_browser_tool(url)
+
+        if html_content:
+            logfire.info("HTML content length", length=len(html_content))
+
+            # Look for common error/no results patterns
+            if (
+                "no flights" in html_content.lower()
+                or "no results" in html_content.lower()
+            ):
+                logfire.warning("No flights pattern detected in HTML")
+                return []
+
+            # Save problematic HTML for inspection
+            if len(html_content) < 10000:
+                with open(
+                    f"debug_scrape_{req.origin}_{req.destination}.html", "w"
+                ) as f:
+                    f.write(html_content)
+
+        try:
+            extraction_result = await flight_extraction_agent.run(
+                f"Extract flights from HTML:\n\n{html_content[:15000]}",
+                # usage=ctx.usage,
+                # usage_limits=EXTRACTION_USAGE_LIMITS,
+            )
+
+            flights = extraction_result.data
+            if not isinstance(flights, list):
+                logfire.warning(
+                    "Extraction returned non-list", result_type=type(flights)
+                )
+                return []
+
+            return flights
+
+        except Exception as e:
+            logfire.error("Extraction failed", error=str(e), exc_info=True)
+            return []  # ✅ Safe fallback
 
 
 @flight_search_agent.output_validator
 async def validate_flight_search(
     ctx: RunContext[FlightDeps], result: FlightSearchResult | NoFlightFound
 ) -> FlightSearchResult | NoFlightFound:
-    """Validate that the search results match the user's request."""
-    if isinstance(result, NoFlightFound):
-        logfire.info(
-            "No flights found for request", request=ctx.deps.search_request.model_dump()
+    """Validate that search results match user's request."""
+
+    # ✅ Check if it's a string (should never happen, but be safe)
+    if isinstance(result, str):
+        logfire.error("Agent returned string instead of object", result=result)
+        raise ModelRetry(
+            f"Agent returned plain text: '{result}'. "
+            f"You must return either FlightSearchResult or NoFlightFound object. "
+            f"Use the create_no_flights_response tool when no flights are found."
         )
 
+    if isinstance(result, NoFlightFound):
+        logfire.info("No flights found", request=ctx.deps.search_request.model_dump())
         return result
 
-    # Validate that flights match the search criteria
-    invalid_flights = []
-    for i, flight in enumerate(result.flights):
-        if (
-            flight.origin.upper() != ctx.deps.search_request.origin.upper()
-            or flight.destination.upper() != ctx.deps.search_request.destination.upper()
-            or flight.date != ctx.deps.search_request.departure_date
-        ):
-            invalid_flights.append((i, flight.flight_number))
+    # Validate flight criteria match
+    req = ctx.deps.search_request
+    invalid = [
+        (i, f.flight_number)
+        for i, f in enumerate(result.flights)
+        if f.origin.upper() != req.origin.upper()
+        or f.destination.upper() != req.destination.upper()
+        or f.date != req.departure_date
+    ]
 
-    if invalid_flights:
-        logfire.warning(
-            "Invalid flights in results",
-            invalid_count=len(invalid_flights),
-            invalid_flights=invalid_flights,
-        )
+    if invalid:
+        logfire.warning("Invalid flights detected", invalid_flights=invalid)
         raise ModelRetry(
-            f"Found {len(invalid_flights)} flights in result don't match search criteria."
+            f"Found {len(invalid)} flights that don't match criteria: {invalid}"
         )
 
-    # Calculate analytics for the result
+    # Calculate analytics
     result.calculate_analytics()
 
     logfire.info(
-        "Flight search completed successfully",
-        total_flight=len(result.flights),
-        cheapest_price=result.cheapest_flight,
+        "Flight search completed",
+        total_flights=len(result.flights),
+        cheapest_price=result.cheapest_price,
     )
-
     return result

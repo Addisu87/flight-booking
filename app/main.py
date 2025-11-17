@@ -7,10 +7,24 @@ import logfire
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models.flight_models import FlightClass, FlightSearchRequest
+from app.models.flight_models import (
+    FlightClass,
+    FlightSearchRequest,
+    NoFlightFound,
+    BookingConfirmation,
+    FlightSearchResult,
+)
+from app.agents.flight_search_agent import (
+    flight_search_agent,
+    FlightDeps,
+)
+from app.agents.booking_agent import booking_agent, BookingDeps
+from app.agents.summarize_agent import (
+    summarize_agent,
+    SummarizeDeps,
+)
 from app.utils.logging import setup_logfire
-from app.services.booking_services import complete_booking_workflow
-from app.services.summarize_services import generate_flight_summary, generate_quick_insights
+# from pydantic_ai.usage import RunUsage
 
 # Initialize logging
 logfire = setup_logfire()
@@ -25,7 +39,6 @@ st.set_page_config(
 
 def setup_streamlit_app():
     """Configure Streamlit application with enhanced UI."""
-    # Custom CSS for better styling
     st.markdown(
         """
     <style>
@@ -110,10 +123,10 @@ def render_booking_form(settings: dict):
         origin = st.text_input(
             "Departure Airport Code",
             value="",
-            placeholder="ADD",
+            placeholder="JFK",
             help="3-letter airport code (e.g., SFO, JFK, LAX)",
         ).upper()
-        
+
         departure_date = st.date_input(
             "Departure Date",
             datetime.date.today() + datetime.timedelta(days=30),
@@ -124,10 +137,10 @@ def render_booking_form(settings: dict):
         destination = st.text_input(
             "Arrival Airport Code",
             value="",
-            placeholder="JFK",
+            placeholder="LAX",
             help="3-letter airport code (e.g., SFO, JFK, LAX)",
         ).upper()
-        
+
         seat_preference = st.text_input(
             "Seat Preference (Optional)",
             placeholder="e.g., 'window seat', '12A', 'aisle seat near front'",
@@ -137,100 +150,80 @@ def render_booking_form(settings: dict):
     return origin, destination, departure_date, seat_preference, settings
 
 
-def render_booking_result(result):
-    """Render complete booking results."""
-    if result["status"] == "error":
-        st.error(f"❌ {result['reason']}")
+def render_flight_results(result):
+    """Render flight search results."""
+    if isinstance(result, NoFlightFound):
+        st.warning(f"❌ {result.message}")
+        st.info("💡 Suggestions: " + ", ".join(result.suggestions))
         return
 
-    # Successful booking
+    st.success(f"🎉 Found {len(result.flights)} flights!")
+
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Cheapest", f"${result.cheapest_price:.2f}")
+    with col2:
+        st.metric("Average", f"${result.average_price:.2f}")
+    with col3:
+        st.metric("Best Value", result.best_value_flight.flight_number)
+
+    # Flight list
+    st.subheader("✈️ Available Flights")
+    for flight in result.flights[:5]:
+        with st.expander(
+            f"**{flight.airline} {flight.flight_number}** - ${flight.price:.2f}"
+        ):
+            st.write(f"**Duration:** {flight.duration}")
+            st.write(f"**Stops:** {flight.stops}")
+            st.write(f"**Departure:** {flight.departure_time}")
+            st.write(f"**Arrival:** {flight.arrival_time}")
+
+
+def render_booking_confirmation(booking: BookingConfirmation):
+    """Render booking confirmation."""
     st.success("🎉 Booking Confirmed!")
 
-    # Booking details
-    col1, col2 = st.columns(2)
+    # Use display helper
+    booking_dict = booking.model_dump_for_display()
 
+    col1, col2 = st.columns(2)
     with col1:
         st.subheader("📋 Flight Details")
-        st.write(f"**Flight:** {result.get('flight_number', 'N/A')}")
-        st.write(f"**Airline:** {result.get('airline', 'N/A')}")
-        st.write(f"**Route:** {result.get('route', 'N/A')}")
-        st.write(f"**Price:** ${result.get('price', 'N/A')}")
-        st.write(f"**Departure:** {result.get('departure_time', 'N/A')}")
+        st.write(f"**Flight:** {booking_dict['flight_number']}")
+        st.write(f"**Airline:** {booking_dict['airline']}")
+        st.write(f"**Route:** {booking_dict['route']}")
+        st.write(f"**Price:** ${booking_dict['price']:.2f}")
 
     with col2:
         st.subheader("💺 Seat & Confirmation")
-        st.write(f"**Seat:** {result.get('seat', 'N/A')}")
-        st.write(f"**Seat Type:** {result.get('seat_type', 'N/A')}")
-        st.write(f"**Confirmation:** {result.get('confirmation_number', 'N/A')}")
-        st.write(f"**Status:** {result.get('status', 'N/A')}")
-
-    # Usage stats if available
-    if "usage_stats" in result:
-        st.subheader("📊 Performance")
-        st.write(f"**Total Tokens:** {result['usage_stats'].get('total_tokens', 'N/A')}")
-        st.write(f"**Total Cost:** ${result['usage_stats'].get('total_cost', 0):.4f}")
-
-
-def render_summary_tab(search_request, flights):
-    """Render the summary analysis tab."""
-    st.header("📊 Flight Analysis")
-    
-    if not flights:
-        st.warning("No flights available for analysis")
-        return
-
-    # Quick insights
-    insights = generate_quick_insights(flights)
-    st.subheader("📈 Quick Insights")
-    for insight in insights["insights"]:
-        st.write(f"• {insight}")
-
-    # AI-powered summary
-    with st.spinner("🤖 Generating AI analysis..."):
-        summary = asyncio.run(generate_flight_summary(search_request, flights))
-        
-        if summary.get("summary_text"):
-            st.subheader("🤖 AI Analysis")
-            st.write(summary["summary_text"])
-            
-        if summary.get("key_insights"):
-            st.subheader("💡 Key Insights")
-            for insight in summary["key_insights"]:
-                st.write(f"• {insight}")
-                
-        if summary.get("recommendations"):
-            st.subheader("🎯 Recommendations")
-            for rec in summary["recommendations"]:
-                st.write(f"• {rec}")
+        st.write(f"**Seat:** {booking_dict['seat']}")
+        if booking_dict.get("has_extra_legroom"):
+            st.write("✅ Extra legroom included")
+        st.write(f"**Confirmation:** {booking_dict['confirmation_number']}")
+        st.write(f"**Status:** {booking_dict['status']}")
 
 
 async def main_application_flow():
-    """Main application flow using complete booking workflow."""
-    # Setup
+    """Main application flow using agent-centric pattern."""
     setup_streamlit_app()
     sidebar_settings = render_sidebar()
 
-    try:
-        # Booking form
-        origin, destination, departure_date, seat_preference, settings = (
-            render_booking_form(sidebar_settings)
-        )
+    origin, destination, departure_date, seat_preference, settings = (
+        render_booking_form(sidebar_settings)
+    )
 
-        # Create tabs for different views
-        tab1, tab2 = st.tabs(["🚀 Book Flight", "📊 Analyze Flights"])
+    # Create tabs
+    tab1, tab2 = st.tabs(["🚀 Book Flight", "📊 Analyze Flights"])
 
-        with tab1:
-            book_button = st.button(
-                "🚀 Complete Booking", type="primary", use_container_width=True
-            )
+    with tab1:
+        if st.button("🚀 Complete Booking", type="primary", use_container_width=True):
+            if not origin or not destination:
+                st.error("❌ Please enter both airport codes")
+                return
 
-            # Complete booking workflow
-            if book_button:
-                if not origin or not destination:
-                    st.error("❌ Please enter both origin and destination airport codes")
-                    return
-
-                with st.spinner("🔄 Processing complete booking... This may take a minute."):
+            with st.spinner("🔄 Processing booking... This may take 60-90 seconds."):
+                try:
                     search_request = FlightSearchRequest(
                         origin=origin,
                         destination=destination,
@@ -239,59 +232,139 @@ async def main_application_flow():
                         flight_class=settings["flight_class"],
                     )
 
-                    # Use the complete booking workflow (usage is handled internally)
-                    result = await complete_booking_workflow(
-                        search_request=search_request,
-                        seat_preference_prompt=seat_preference if seat_preference else None,
+                    # ✅ STEP 1: Search for flights FIRST
+                    search_result = await flight_search_agent.run(
+                        f"Search flights {origin}→{destination}",
+                        deps=FlightDeps(search_request=search_request),
                     )
 
-                    render_booking_result(result)
+                    # ✅ STEP 2: Handle "no flights" IMMEDIATELY
+                    if isinstance(search_result.data, NoFlightFound):
+                        st.warning(f"❌ {search_result.data.message}")
+                        st.info(
+                            "💡 Suggestions: "
+                            + ", ".join(search_result.data.suggestions)
+                        )
+                        return  # Early exit - no booking possible
 
-        with tab2:
-            if origin and destination:
-                search_request = FlightSearchRequest(
-                    origin=origin,
-                    destination=destination,
-                    departure_date=departure_date,
-                    passengers=settings["default_passengers"],
-                    flight_class=settings["flight_class"],
-                )
-                
-                # For analysis, we need to get flights first
-                from app.services.flight_services import search_flights
-                search_result = await search_flights(search_request)
-                flights = getattr(search_result, 'flights', []) if hasattr(search_result, 'flights') else []
-                
-                render_summary_tab(search_request, flights)
-            else:
-                st.info("✈️ Enter airport codes above to see flight analysis")
+                    # ✅ STEP 3: Extract best flight
+                    if (
+                        not isinstance(search_result.data, FlightSearchResult)
+                        or not search_result.data.flights
+                    ):
+                        st.error("❌ Unexpected error: No flights found")
+                        return
 
-        # How it works info
-        with st.sidebar:
-            st.markdown("---")
-            st.subheader("💡 How It Works")
-            st.info("""
-            **Complete Booking Workflow:**
-            1. **Search** for available flights
-            2. **Select** the best flight option  
-            3. **Choose** your preferred seat using AI
-            4. **Generate** booking confirmation
+                    best_flight = search_result.data.best_value_flight
+
+                    # ✅ STEP 4: Only now call booking agent with CONFIRMED flight
+
+                    # ✅ Create usage tracker at top level
+                    # usage = RunUsage()
+
+                    # ✅ Call booking agent directly
+                    booking_result = await booking_agent.run(
+                        "Complete flight booking workflow",
+                        deps=BookingDeps(
+                            search_request=search_request,
+                            selected_flight=best_flight,
+                            seat_preference_prompt=seat_preference,
+                        ),
+                        # usage=usage,
+                        # usage_limits=BOOKING_USAGE_LIMITS,
+                    )
+
+                    logfire.debug(
+                        "Booking agent result",
+                        result_type=type(booking_result.data),
+                        result=booking_result.data,
+                    )
+
+                    # ✅ STEP 5: Display confirmation
+                    render_booking_confirmation(booking_result.data)
+
+                except Exception as e:
+                    logfire.error("Booking failed", error=str(e), exc_info=True)
+                    st.error(f"🚨 Booking failed: {str(e)}")
+
+    with tab2:
+        if origin and destination:
+            search_request = FlightSearchRequest(
+                origin=origin,
+                destination=destination,
+                departure_date=departure_date,
+                passengers=settings["default_passengers"],
+                flight_class=settings["flight_class"],
+            )
+
+            with st.spinner("🔄 Analyzing flights..."):
+                try:
+                    # ✅ Create usage tracker at top level
+                    # usage = RunUsage()
+
+                    # ✅ Call flight search agent
+                    search_result = await flight_search_agent.run(
+                        f"Analyze flights from {origin} to {destination}",
+                        deps=FlightDeps(search_request=search_request),
+                        # usage=usage,
+                        # usage_limits=FLIGHT_SEARCH_USAGE_LIMITS,
+                    )
+
+                    if isinstance(search_result.data, NoFlightFound):
+                        st.warning("No flights found for analysis")
+                    else:
+                        # ✅ Call summarize agent
+                        summary_result = await summarize_agent.run(
+                            "Generate comprehensive flight summary",
+                            deps=SummarizeDeps(
+                                search_request=search_request,
+                                flights=search_result.data.flights,
+                            ),
+                            # usage=usage,
+                            # usage_limits=SUMMARIZE_USAGE_LIMITS,
+                        )
+
+                        # Display results
+                        render_flight_results(search_result.data)
+
+                        st.markdown("---")
+                        st.subheader("🤖 AI Analysis")
+                        st.write(summary_result.data.summary_text)
+
+                        if summary_result.data.recommendations:
+                            st.subheader("🎯 Recommendations")
+                            for rec in summary_result.data.recommendations:
+                                st.write(f"• {rec}")
+
+                except Exception as e:
+                    logfire.error("Analysis failed", error=str(e), exc_info=True)
+                    st.error(f"🚨 Analysis failed: {str(e)}")
+        else:
+            st.info("✈️ Enter airport codes to see flight analysis")
+
+    # How it works
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("💡 How It Works")
+        st.info(
+            """
+            **Agent-Based Workflow:**
+            1. **Search Agent** fetches & extracts real flights
+            2. **Booking Agent** coordinates seat selection
+            3. **Summarize Agent** provides AI insights
             
-            *API keys are configured via .env file*
-            """)
-
-    except Exception as e:
-        logfire.error("Application error", error=str(e))
-        st.error(f"🚨 An unexpected error occurred: {str(e)}")
-        st.info("💡 Please check the console for details.")
+            *Direct agent orchestration - no service layer*
+            """
+        )
 
 
 def main():
-    """Main entry point with async support."""
+    """Entry point."""
     try:
         asyncio.run(main_application_flow())
     except Exception as e:
-        st.error(f"Failed to start application: {str(e)}")
+        st.error(f"🚨 Failed to start: {str(e)}")
+        logfire.error("Startup error", error=str(e), exc_info=True)
 
 
 if __name__ == "__main__":
