@@ -9,7 +9,8 @@ APIFY_ACTOR_ID = "apify/website-content-crawler"
 
 def apify_browser_tool(url: str) -> str:
     if not settings.APIFY_API_TOKEN:
-        raise ValueError("APIFY_API_TOKEN missing")
+        logfire.error("APIFY_API_TOKEN missing")
+        return ""
 
     with logfire.span("apify_navigation", url=url):
         try:
@@ -21,7 +22,8 @@ def apify_browser_tool(url: str) -> str:
             )
 
             if start.status_code != 200:
-                return f"Apify error: {start.text}"
+                logfire.error("Apify run start failed", status=start.status_code)
+                return ""
 
             run_id = start.json()["data"]["id"]
 
@@ -34,25 +36,32 @@ def apify_browser_tool(url: str) -> str:
                 ).json()
 
                 if status["data"]["status"] in (
-                    "SUCCEEDED", "FAILED", "ABORTED", "TIMED_OUT"
+                    "SUCCEEDED",
+                    "FAILED",
+                    "ABORTED",
+                    "TIMED_OUT",
                 ):
                     break
 
                 time.sleep(8)
 
             if status["data"]["status"] != "SUCCEEDED":
-                return f"Apify failed: {status['data']['status']}"
+                logfire.error(
+                    "Apify run did not succeed", status=status["data"]["status"]
+                )
+                return ""
 
             dataset_id = status["data"]["defaultDatasetId"]
 
             items = requests.get(
-                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                f"https://api/apify.com/v2/datasets/{dataset_id}/items",
                 params={"token": settings.APIFY_API_TOKEN},
                 timeout=15,
             ).json()
 
-            html = items[0].get("html") or items[0].get("pageContent", "")
+            html = items[0].get("html") or items[0].get("pageContent") or ""
             return html2text(html)
 
         except Exception as e:
-            return f"Apify error: {str(e)}"
+            logfire.error("Exception during apify_browser_tool", error=str(e))
+            return ""

@@ -93,7 +93,7 @@ async def search_kayak_flights(ctx: RunContext[FlightDeps]) -> List[FlightDetail
         url = kayak_search_tool(req)
         logfire.info("Generated Kayak URL", url=url)
 
-        html_content = await apify_browser_tool(url)
+        html_content = apify_browser_tool(url)
 
         if html_content:
             logfire.info("HTML content length", length=len(html_content))
